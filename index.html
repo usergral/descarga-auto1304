@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Descarga Auto 1304 de 2026</title>
+<style>
+  html,body{margin:0;padding:0;background:transparent;font-family:'Segoe UI',Arial,sans-serif;}
+  body{padding:6px;}
+  #btn{display:flex;align-items:center;gap:14px;background:#fff;color:#263238;text-align:left;font-family:inherit;cursor:pointer;
+       padding:18px;border:none;border-radius:10px;border-left:6px solid #2e7d32;box-shadow:0 2px 6px rgba(0,0,0,.10);
+       box-sizing:border-box;width:100%;}
+  #btn:hover{box-shadow:0 3px 10px rgba(0,0,0,.18);}
+  .ico{flex-shrink:0;display:flex;align-items:center;justify-content:center;width:52px;height:52px;border-radius:50%;background:#e8f5e9;}
+  .txt{display:flex;flex-direction:column;}
+  .txt strong{font-size:16px;}
+  .txt span{font-size:13px;color:#607d8b;margin-top:4px;}
+</style>
+</head>
+<body>
+<button type="button" id="btn">
+  <span class="ico">
+    <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#2e7d32" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+  </span>
+  <span class="txt">
+    <strong>Descargar base en Excel</strong>
+    <span id="msg">Auto 1304 de 2026 (.xlsx).</span>
+  </span>
+</button>
+
+<script>
+(function () {
+  var LAYER = 'https://services1.arcgis.com/zBDE2yVH0hTpllh3/arcgis/rest/services/Auto_1304_26_vista/FeatureServer/0';
+  var NOMBRE_ARCHIVO = 'Auto_1304_26';
+  var btn = document.getElementById('btn'), msg = document.getElementById('msg');
+  var original = msg.textContent, ocupado = false;
+  function estado(t){ msg.textContent = t; }
+
+  function cargarSheetJS() {
+    return new Promise(function (ok, fail) {
+      if (window.XLSX) return ok();
+      var s = document.createElement('script');
+      s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+      s.onload = ok;
+      s.onerror = function(){ fail(new Error('No se pudo cargar la librería de Excel')); };
+      document.head.appendChild(s);
+    });
+  }
+  function getJSON(url) {
+    return fetch(url).then(function(r){ return r.json(); }).then(function(j){
+      if (j.error) throw new Error(j.error.message || 'Error del servicio');
+      return j;
+    });
+  }
+
+  async function descargar() {
+    if (ocupado) return;
+    ocupado = true; btn.style.opacity = '.7'; btn.style.cursor = 'wait';
+    try {
+      estado('Preparando…');
+      await cargarSheetJS();
+      var meta = await getJSON(LAYER + '?f=json');
+
+      // Campos que tienen su nombre en otra columna (select_one_from_file -> nom_*)
+      var NOM = { municipio:'nom_municipio', terr_res_int:'nom_tri', comun:'nom_comun', eps:'nom_eps',
+                  pres_prim:'nom_pres_prim', pres_comp:'nom_pres_comp', operador:'nom_operador' };
+      var ocultar = {}; Object.keys(NOM).forEach(function(k){ ocultar[NOM[k]] = true; });
+      var SOLO_FECHA = { f_atencion:1, f_nacimiento:1, f_ruta:1 };
+
+      var campos = [], fechas = {}, dominios = {};
+      (meta.fields || []).forEach(function (f) {
+        if (ocultar[f.name]) return;                       // se fusiona en su columna de código
+        campos.push({ name: f.name, alias: f.alias || f.name });
+        if (f.type === 'esriFieldTypeDate') fechas[f.name] = true;
+        if (f.domain && f.domain.codedValues) {            // dominio: código -> descripción
+          var m = {};
+          f.domain.codedValues.forEach(function (c) { m[String(c.code)] = c.name; });
+          dominios[f.name] = m;
+        }
+      });
+      var esPunto = meta.geometryType === 'esriGeometryPoint';
+      var encab = campos.map(function (c) { return c.alias; });
+      if (esPunto) encab.push('X', 'Y');
+
+      var filas = [], offset = 0, hayMas = true;
+      while (hayMas) {
+        estado('Descargando… ' + filas.length + ' registros');
+        var j = await getJSON(LAYER + '/query?where=1%3D1&outFields=*&returnGeometry=' + esPunto +
+                              '&outSR=4326&f=json&resultOffset=' + offset + '&resultRecordCount=1000');
+        var feats = j.features || [];
+        feats.forEach(function (ft) {
+          var a = ft.attributes, o = {};
+          campos.forEach(function (c) {
+            var v = a[c.name];
+            if (NOM[c.name] && a[NOM[c.name]]) v = a[NOM[c.name]];            // nombre en vez de código
+            else if (dominios[c.name] && v !== null && v !== undefined &&
+                     dominios[c.name][String(v)] !== undefined) v = dominios[c.name][String(v)];
+            else if (v !== null && v !== undefined && fechas[c.name]) v = new Date(v);
+            o[c.alias] = (v === undefined ? null : v);
+          });
+          if (esPunto) {
+            o['X'] = ft.geometry ? ft.geometry.x : null;
+            o['Y'] = ft.geometry ? ft.geometry.y : null;
+          }
+          filas.push(o);
+        });
+        offset += feats.length;
+        hayMas = !!j.exceededTransferLimit && feats.length > 0;
+      }
+      if (!filas.length) { estado('La capa no tiene registros.'); return; }
+
+      estado('Generando Excel…');
+      var ws = XLSX.utils.json_to_sheet(filas, { header: encab, cellDates: true });
+      // Formato de fechas y ancho de columnas
+      var rango = XLSX.utils.decode_range(ws['!ref']), anchos = [];
+      for (var c = 0; c <= rango.e.c; c++) {
+        var nombre = campos[c] ? campos[c].name : null, ancho = String(encab[c]).length;
+        for (var r = 1; r <= rango.e.r; r++) {
+          var cel = ws[XLSX.utils.encode_cell({ r: r, c: c })];
+          if (!cel) continue;
+          if (cel.t === 'd') cel.z = SOLO_FECHA[nombre] ? 'yyyy-mm-dd' : 'yyyy-mm-dd hh:mm';
+          var len = cel.t === 'd' ? 16 : String(cel.v).length;
+          if (len > ancho) ancho = len;
+        }
+        anchos.push({ wch: Math.min(ancho + 2, 45) });
+      }
+      ws['!cols'] = anchos;
+      var wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Datos');
+      var hoy = new Date().toISOString().slice(0, 10);
+      XLSX.writeFile(wb, NOMBRE_ARCHIVO + '_' + hoy + '.xlsx', { cellDates: true });
+      estado('Listo: ' + filas.length + ' registros.');
+      setTimeout(function(){ estado(original); }, 4000);
+    } catch (e) {
+      console.error(e);
+      estado('Error: ' + e.message);
+      setTimeout(function(){ estado(original); }, 6000);
+    } finally {
+      ocupado = false; btn.style.opacity = '1'; btn.style.cursor = 'pointer';
+    }
+  }
+  btn.addEventListener('click', descargar);
+})();
+</script>
+</body>
+</html>
